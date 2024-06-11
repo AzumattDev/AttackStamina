@@ -155,7 +155,7 @@ static class HudOnDestroyPatch
     static void Prefix(Hud __instance) => AttackStaminaPlugin.flag1 = false;
 }
 
-[HarmonyPatch(typeof(Hud), nameof(Hud.FixedUpdate))]
+[HarmonyPatch(typeof(Hud), nameof(Hud.LateUpdate))]
 static class HudFixedUpdatePatch
 {
     internal static Slider _StaminaBar;

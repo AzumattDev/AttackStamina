@@ -16,10 +16,10 @@ namespace AttackStamina
     public class AttackStaminaPlugin : BaseUnityPlugin
     {
         internal const string ModName = "AttackStamina";
-        internal const string ModVersion = "1.0.0";
+        internal const string ModVersion = "1.0.1";
         internal const string Author = "Azumatt";
-        private const string ModGUID = Author + "." + ModName;
-        private static string ConfigFileName = ModGUID + ".cfg";
+        private const string ModGUID = $"{Author}.{ModName}";
+        private static string ConfigFileName = $"{ModGUID}.cfg";
         private static string ConfigFileFullPath = Paths.ConfigPath + Path.DirectorySeparatorChar + ConfigFileName;
         internal static string ConnectionError = "";
         private readonly Harmony _harmony = new(ModGUID);
@@ -182,7 +182,7 @@ namespace AttackStamina
             public override bool IsValid(object value) => true;
 
             public override string ToDescriptionString() =>
-                "# Acceptable values: " + string.Join(", ", UnityInput.Current.SupportedKeyCodes);
+                $"# Acceptable values: {string.Join(", ", UnityInput.Current.SupportedKeyCodes)}";
         }
 
         #endregion
