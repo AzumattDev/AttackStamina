@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using BepInEx;
+using BepInEx.Bootstrap;
 using BepInEx.Configuration;
 using BepInEx.Logging;
 using HarmonyLib;
@@ -13,10 +14,11 @@ using UnityEngine;
 namespace AttackStamina
 {
     [BepInPlugin(ModGUID, ModName, ModVersion)]
+    [BepInDependency("MK_BetterUI", BepInDependency.DependencyFlags.SoftDependency)]
     public class AttackStaminaPlugin : BaseUnityPlugin
     {
         internal const string ModName = "AttackStamina";
-        internal const string ModVersion = "1.0.1";
+        internal const string ModVersion = "1.0.2";
         internal const string Author = "Azumatt";
         private const string ModGUID = $"{Author}.{ModName}";
         private static string ConfigFileName = $"{ModGUID}.cfg";
@@ -24,7 +26,7 @@ namespace AttackStamina
         internal static string ConnectionError = "";
         private readonly Harmony _harmony = new(ModGUID);
         public static readonly ManualLogSource AttackStaminaLogger = BepInEx.Logging.Logger.CreateLogSource(ModName);
-        private static readonly ConfigSync ConfigSync = new(ModGUID) { DisplayName = ModName, CurrentVersion = ModVersion, MinimumRequiredVersion = ModVersion };
+        private static readonly ConfigSync ConfigSync = new(ModGUID) { DisplayName = ModName, CurrentVersion = ModVersion, MinimumRequiredVersion = ModVersion, ModRequired = false};
         public static bool flag = true;
         public static bool flag1 = false;
         public static bool hasUsedRecently = false;
@@ -33,6 +35,7 @@ namespace AttackStamina
         public static int counter = 100;
         public static int displayCounter = 0;
         public static GameObject StaminaUI;
+        public static bool betterUIInstalled = false;
 
         public enum Toggle
         {
@@ -44,8 +47,24 @@ namespace AttackStamina
         {
             _serverConfigLocked = config("1 - General", "Lock Configuration", Toggle.On, "If on, the configuration is locked and can be changed by server admins only.");
             _ = ConfigSync.AddLockingConfigEntry(_serverConfigLocked);
+            
+            Chainloader.PluginInfos.TryGetValue("MK_BetterUI", out PluginInfo? pluginInfo);
+            float defaultBind;
+            if (pluginInfo != null)
+            {
+                defaultBind = 0.0f;
+                betterUIInstalled = true;
+            }
+            else
+            {
+                defaultBind = -95.0f;
+            }
 
             displayTime = config("2 - UI", "Time Until Full Bar disappears", 75, "Time until full bar disappears", false);
+            uiAnchorMin = config("2 - UI", "UI Anchor Min", new Vector2(0.5f, 0.0f), "UI Anchor min", false);
+            uiAnchorMax = config("2 - UI", "UI Anchor Max", new Vector2(0.5f, 0.0f), "UI Anchor max", false);
+            uiDeltaOffset = config("2 - UI", "UI Delta Offset", new Vector2(12f, 0.0f), "UI Delta Offset. This is the offset amounts from the stamina panel. Change this if the bar is not in the right position", false);
+            uiAnchoredPosition = config("2 - UI", "UI Anchored Position Offset", new Vector2(0.0f, defaultBind), "UI Anchored Position Offset. This is the offset amounts from the stamina panel. Change this if the bar is not in the right position", false);
             timeTillCharging = config("3 - Recharge", "Time Until the Bar Starts to Recharge", 75, "Time until bar starts to recharge");
             AttackStaminaRecharge = config("4 - Values", "Attack Stamina Recharge Rate", 1f, "Multiple of how fast the stamina bar recharges");
             MaxAttackStamina = config("4 - Values", "Maximum Attack Stamina", 100f, "Maximum Attack Stamina");
@@ -65,13 +84,10 @@ namespace AttackStamina
         private static AssetBundle GetAssetBundleFromResources(string filename)
         {
             Assembly execAssembly = Assembly.GetExecutingAssembly();
-            string resourceName = execAssembly.GetManifestResourceNames()
-                .Single(str => str.EndsWith(filename));
+            string resourceName = execAssembly.GetManifestResourceNames().Single(str => str.EndsWith(filename));
 
-            using (Stream? stream = execAssembly.GetManifestResourceStream(resourceName))
-            {
-                return AssetBundle.LoadFromStream(stream);
-            }
+            using Stream? stream = execAssembly.GetManifestResourceStream(resourceName);
+            return AssetBundle.LoadFromStream(stream);
         }
 
         public static void LoadAssets()
@@ -120,7 +136,7 @@ namespace AttackStamina
             if (attackStamina > 0.0 && !currentPlayer.IsSneaking() | crouch)
             {
                 currentPlayer.AddStamina(1f);
-                HumanoidStartAttackPatch.useAttackStaminaMod(noStaminaSprintDrain.Value);
+                HumanoidStartAttackPatch.UseAttackStaminaMod(noStaminaSprintDrain.Value);
                 return true;
             }
 
@@ -133,6 +149,10 @@ namespace AttackStamina
 
         private static ConfigEntry<Toggle> _serverConfigLocked = null!;
         public static ConfigEntry<int> displayTime;
+        public static ConfigEntry<Vector2> uiAnchorMin;
+        public static ConfigEntry<Vector2> uiAnchorMax;
+        public static ConfigEntry<Vector2> uiDeltaOffset;
+        public static ConfigEntry<Vector2> uiAnchoredPosition;
         public static ConfigEntry<int> timeTillCharging;
         public static ConfigEntry<float> AttackStaminaRecharge;
         public static ConfigEntry<float> MaxAttackStamina;
@@ -141,14 +161,9 @@ namespace AttackStamina
         public static ConfigEntry<Toggle> useNormWhenDrained;
         public static ConfigEntry<Toggle> useAttackWhenDrained;
 
-        private ConfigEntry<T> config<T>(string group, string name, T value, ConfigDescription description,
-            bool synchronizedSetting = true)
+        private ConfigEntry<T> config<T>(string group, string name, T value, ConfigDescription description, bool synchronizedSetting = true)
         {
-            ConfigDescription extendedDescription =
-                new(
-                    description.Description +
-                    (synchronizedSetting ? " [Synced with Server]" : " [Not Synced with Server]"),
-                    description.AcceptableValues, description.Tags);
+            ConfigDescription extendedDescription = new(description.Description + (synchronizedSetting ? " [Synced with Server]" : " [Not Synced with Server]"), description.AcceptableValues, description.Tags);
             ConfigEntry<T> configEntry = Config.Bind(group, name, value, extendedDescription);
             //var configEntry = Config.Bind(group, name, value, description);
 
@@ -158,8 +173,7 @@ namespace AttackStamina
             return configEntry;
         }
 
-        private ConfigEntry<T> config<T>(string group, string name, T value, string description,
-            bool synchronizedSetting = true)
+        private ConfigEntry<T> config<T>(string group, string name, T value, string description, bool synchronizedSetting = true)
         {
             return config(group, name, value, new ConfigDescription(description), synchronizedSetting);
         }
@@ -172,32 +186,6 @@ namespace AttackStamina
             [UsedImplicitly] public Action<ConfigEntryBase>? CustomDrawer = null!;
         }
 
-        class AcceptableShortcuts : AcceptableValueBase
-        {
-            public AcceptableShortcuts() : base(typeof(KeyboardShortcut))
-            {
-            }
-
-            public override object Clamp(object value) => value;
-            public override bool IsValid(object value) => true;
-
-            public override string ToDescriptionString() =>
-                $"# Acceptable values: {string.Join(", ", UnityInput.Current.SupportedKeyCodes)}";
-        }
-
         #endregion
-    }
-
-    public static class KeyboardExtensions
-    {
-        public static bool IsKeyDown(this KeyboardShortcut shortcut)
-        {
-            return shortcut.MainKey != KeyCode.None && Input.GetKeyDown(shortcut.MainKey) && shortcut.Modifiers.All(Input.GetKey);
-        }
-
-        public static bool IsKeyHeld(this KeyboardShortcut shortcut)
-        {
-            return shortcut.MainKey != KeyCode.None && Input.GetKey(shortcut.MainKey) && shortcut.Modifiers.All(Input.GetKey);
-        }
     }
 }

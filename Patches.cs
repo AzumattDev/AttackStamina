@@ -1,4 +1,6 @@
-﻿using HarmonyLib;
+﻿using BepInEx;
+using BepInEx.Bootstrap;
+using HarmonyLib;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -7,13 +9,26 @@ namespace AttackStamina;
 [HarmonyPatch(typeof(Hud), nameof(Hud.Awake))]
 static class HudAwakePatch
 {
+    internal static RectTransform _StaminaBarRect = null!;
+    internal static GameObject _StaminaBarUI = null!;
+    internal static RectTransform _StaminaBarUIRect = null!;
+    internal static Slider _StaminaBar = null!;
+    internal static RectTransform _StaminaPanelRoot = null!;
+
+    [HarmonyPriority(Priority.Last)]
     static void Postfix(Hud __instance)
     {
+        RectTransform? root = AttackStaminaPlugin.betterUIInstalled ? Utils.FindChild(__instance.m_rootObject.transform, "BetterUI_StaminaBar").GetComponent<RectTransform>() : __instance.m_staminaBar2Root;
         AttackStaminaPlugin.flag1 = true;
         AttackStaminaPlugin.AttackStaminaLogger.LogDebug("Instantiating AttackStamina Bar");
-        HudFixedUpdatePatch._StaminaBar = UnityEngine.Object.Instantiate(AttackStaminaPlugin.StaminaUI, __instance.transform).GetComponentInChildren<Slider>();
-        HudFixedUpdatePatch._StaminaBar.gameObject.SetActive(false);
-        HudFixedUpdatePatch._StaminaBar.GetComponent<RectTransform>().transform.Rotate(new Vector3(0.0f, 0.0f, -90f));
+        _StaminaBarUI = Object.Instantiate(AttackStaminaPlugin.StaminaUI, root);
+        _StaminaBarUIRect = _StaminaBarUI.GetComponent<RectTransform>();
+        _StaminaBar = _StaminaBarUI.GetComponentInChildren<Slider>();
+        _StaminaBar.gameObject.SetActive(false);
+        _StaminaBarRect = _StaminaBar.GetComponent<RectTransform>();
+        _StaminaBarRect.transform.Rotate(new Vector3(0.0f, 0.0f, -90f));
+
+        _StaminaPanelRoot = root;
     }
 }
 
@@ -24,18 +39,17 @@ static class CharacterJumpPatch
     {
         if (AttackStaminaPlugin.useAttackWhenDrained.Value == AttackStaminaPlugin.Toggle.Off || __instance.HaveStamina(__instance.m_jumpStaminaUsage))
             return;
-        if (AttackStaminaPlugin.attackStamina - (double)__instance.m_jumpStaminaUsage >= 0.0 && __instance.IsOnGround())
+
+        if (AttackStaminaPlugin.attackStamina >= __instance.m_jumpStaminaUsage && __instance.IsOnGround())
         {
             __instance.m_jumpForceTiredFactor = 1f;
-            HumanoidStartAttackPatch.useAttackStaminaMod(__instance.m_jumpStaminaUsage);
+            HumanoidStartAttackPatch.UseAttackStaminaMod(__instance.m_jumpStaminaUsage);
         }
-        else if (AttackStaminaPlugin.attackStamina - (double)__instance.m_jumpStaminaUsage < __instance.m_jumpStaminaUsage)
+        else
         {
             __instance.m_jumpForceTiredFactor = AttackStaminaPlugin.noStaminaJumpForce.Value;
             Hud.instance.StaminaBarEmptyFlash();
         }
-        else
-            Hud.instance.StaminaBarEmptyFlash();
     }
 }
 
@@ -52,10 +66,11 @@ static class CharacterOnSwimmingPatch
     {
         if (AttackStaminaPlugin.useAttackWhenDrained.Value == AttackStaminaPlugin.Toggle.Off || __instance.HaveStamina())
             return;
+
         if (AttackStaminaPlugin.attackStamina > 0.0)
         {
             __instance.AddStamina(1f);
-            HumanoidStartAttackPatch.useAttackStaminaMod(AttackStaminaPlugin.noStaminaSprintDrain.Value);
+            HumanoidStartAttackPatch.UseAttackStaminaMod(AttackStaminaPlugin.noStaminaSprintDrain.Value);
         }
         else
             Hud.instance.StaminaBarEmptyFlash();
@@ -73,23 +88,38 @@ static class HumanoidStartAttackPatch
 {
     internal static Player player1;
     internal static bool DoAttack = true;
+    private static float lastAttackTime = 0f;
 
-    static bool Prefix(Humanoid __instance)
+    static bool Prefix(Humanoid __instance, bool secondaryAttack)
     {
         float attackStamina = __instance.GetCurrentWeapon().m_shared.m_attack.m_attackStamina;
-        if (!__instance.IsPlayer() || AttackStaminaPlugin.attackStamina - (double)attackStamina >= 0.0 && DoAttack)
+        float secondattackStamina = __instance.GetCurrentWeapon().m_shared.m_secondaryAttack.m_attackStamina;
+
+        if (!__instance.IsPlayer() || __instance != Player.m_localPlayer || (AttackStaminaPlugin.attackStamina - (double)attackStamina >= 0.0 && DoAttack&& !secondaryAttack) || (AttackStaminaPlugin.attackStamina - (double)secondattackStamina >= 0.0 && DoAttack && secondaryAttack))
             return true;
+
+        // Debounce to prevent rapid stamina depletion
+        if (Time.time - lastAttackTime < 0.1f)
+            return false;
+
+        lastAttackTime = Time.time;
+
+        if (AttackStaminaPlugin.attackStamina >= attackStamina && DoAttack)
+            return true;
+
         player1 = (Player)__instance;
-        if (AttackStaminaPlugin.attackStamina >= (double)attackStamina)
+
+        if (AttackStaminaPlugin.attackStamina >= attackStamina)
         {
             DoAttack = true;
             return true;
         }
 
-        if (player1.GetStamina() - (double)attackStamina >= 0.0 && AttackStaminaPlugin.attackStamina - (double)attackStamina < 0.0)
+        if (player1.GetStamina() >= attackStamina && AttackStaminaPlugin.attackStamina < attackStamina)
         {
             if (AttackStaminaPlugin.useNormWhenDrained.Value == AttackStaminaPlugin.Toggle.Off)
                 return false;
+
             AttackStaminaPlugin.attackStamina = 0.0f;
             return true;
         }
@@ -99,7 +129,7 @@ static class HumanoidStartAttackPatch
         return false;
     }
 
-    public static void useAttackStaminaMod(float v)
+    public static void UseAttackStaminaMod(float v)
     {
         AttackStaminaPlugin.attackStamina -= v;
         AttackStaminaPlugin.counter = 0;
@@ -116,12 +146,12 @@ static class AttackGetAttackStaminaPatch
     {
         if (__instance.m_character.IsPlayer())
         {
-            if ((double)AttackStaminaPlugin.attackStamina - (double)__instance.m_attackStamina >= 0.0 && __instance.m_character.IsPlayer())
+            if (AttackStaminaPlugin.attackStamina >= __instance.m_attackStamina && !__instance.m_character.InAttack())
             {
                 HumanoidStartAttackPatch.DoAttack = true;
-                HumanoidStartAttackPatch.useAttackStaminaMod(__instance.m_attackStamina);
+                HumanoidStartAttackPatch.UseAttackStaminaMod(__instance.m_attackStamina);
             }
-            else if ((double)AttackStaminaPlugin.attackStamina <= 0.0 && (double)((Player)__instance.m_character).GetStamina() > 0.0 && (double)((Player)__instance.m_character).GetStamina() - (double)__instance.m_attackStamina >= 0.0)
+            else if (AttackStaminaPlugin.attackStamina <= 0.0 && ((Player)__instance.m_character).GetStamina() > 0.0 && ((Player)__instance.m_character).GetStamina() >= __instance.m_attackStamina)
             {
                 HumanoidStartAttackPatch.DoAttack = true;
                 ((Player)__instance.m_character).UseStamina(__instance.m_attackStamina);
@@ -138,13 +168,17 @@ static class PlayerUpdateAttackBowDrawPatch
     static void Prefix(Player __instance)
     {
         ItemDrop.ItemData currentWeapon = __instance.GetCurrentWeapon();
+
         if (!__instance.IsDrawingBow())
             return;
+
         float num = AttackStaminaPlugin.attackStamina > 0.0 ? 1f : 0.0f;
         float drawStaminaDrain = currentWeapon.GetDrawStaminaDrain();
+
         if (__instance.GetAttackDrawPercentage() >= 1.0)
             drawStaminaDrain *= 0.5f;
-        HumanoidStartAttackPatch.useAttackStaminaMod(drawStaminaDrain * Time.fixedDeltaTime);
+
+        HumanoidStartAttackPatch.UseAttackStaminaMod(drawStaminaDrain * Time.fixedDeltaTime);
         __instance.UseStamina(-num * drawStaminaDrain * Time.fixedDeltaTime);
     }
 }
@@ -155,20 +189,21 @@ static class HudOnDestroyPatch
     static void Prefix(Hud __instance) => AttackStaminaPlugin.flag1 = false;
 }
 
-[HarmonyPatch(typeof(Hud), nameof(Hud.LateUpdate))]
+[HarmonyPatch(typeof(Hud), nameof(Hud.Update))]
 static class HudFixedUpdatePatch
 {
-    internal static Slider _StaminaBar;
-
     static void Prefix(Hud __instance)
     {
         if (AttackStaminaPlugin.flag)
             ++AttackStaminaPlugin.counter;
-        if (AttackStaminaPlugin.hasUsedRecently && AttackStaminaPlugin.attackStamina >= (double)AttackStaminaPlugin.MaxAttackStamina.Value)
+
+        if (AttackStaminaPlugin.hasUsedRecently && AttackStaminaPlugin.attackStamina >= AttackStaminaPlugin.MaxAttackStamina.Value)
             ++AttackStaminaPlugin.displayCounter;
-        if (AttackStaminaPlugin.attackStamina <= (double)AttackStaminaPlugin.MaxAttackStamina.Value && IsRegening(AttackStaminaPlugin.counter))
+
+        if (AttackStaminaPlugin.attackStamina <= AttackStaminaPlugin.MaxAttackStamina.Value && IsRegening(AttackStaminaPlugin.counter))
             AttackStaminaPlugin.attackStamina += 0.5f * AttackStaminaPlugin.AttackStaminaRecharge.Value;
-        if (AttackStaminaPlugin.attackStamina > (double)AttackStaminaPlugin.MaxAttackStamina.Value)
+
+        if (AttackStaminaPlugin.attackStamina > AttackStaminaPlugin.MaxAttackStamina.Value)
         {
             AttackStaminaPlugin.attackStamina = AttackStaminaPlugin.MaxAttackStamina.Value;
             AttackStaminaPlugin.flag = false;
@@ -176,36 +211,37 @@ static class HudFixedUpdatePatch
 
         if (!AttackStaminaPlugin.flag1)
             return;
-        Slider componentInChildren = _StaminaBar.GetComponentInChildren<Slider>();
-        componentInChildren.maxValue = AttackStaminaPlugin.MaxAttackStamina.Value;
-        componentInChildren.normalizedValue = AttackStaminaPlugin.attackStamina / 100f;
-        componentInChildren.value = AttackStaminaPlugin.attackStamina;
-        _StaminaBar.gameObject.SetActive(isShowing());
+
+        HudAwakePatch._StaminaBar.maxValue = AttackStaminaPlugin.MaxAttackStamina.Value;
+        HudAwakePatch._StaminaBar.normalizedValue = AttackStaminaPlugin.attackStamina / 100f;
+        HudAwakePatch._StaminaBar.value = AttackStaminaPlugin.attackStamina;
+        HudAwakePatch._StaminaBar.gameObject.SetActive(IsShowing());
         //AttackStaminaPlugin.AttackStaminaLogger.LogError("Is Showing: " + isShowing());
-        Transform? parent = _StaminaBar.transform.parent.parent;
-        RectTransform component1 = parent.GetComponent<RectTransform>();
-        RectTransform component2 = parent.parent.GetChild(0).GetChild(2).GetComponent<RectTransform>();
-        component1.anchorMin = new Vector2(0.5f, 0.0f);
-        component1.anchorMax = new Vector2(0.5f, 0.0f);
-        _StaminaBar.GetComponent<RectTransform>().sizeDelta = new Vector2(component2.sizeDelta.x - 12f, component2.sizeDelta.y - 15f);
-        component1.anchoredPosition = new Vector2(0.0f, component2.anchoredPosition.y + 30f);
+        RectTransform component2 = HudAwakePatch._StaminaPanelRoot;
+        HudAwakePatch._StaminaBarUIRect.anchorMin = AttackStaminaPlugin.uiAnchorMin.Value;
+        HudAwakePatch._StaminaBarUIRect.anchorMax = AttackStaminaPlugin.uiAnchorMax.Value;
+        HudAwakePatch._StaminaBar.GetComponent<RectTransform>().sizeDelta = new Vector2(component2.sizeDelta.x - (AttackStaminaPlugin.uiDeltaOffset.Value.x), component2.sizeDelta.y - (AttackStaminaPlugin.uiDeltaOffset.Value.y));
+        HudAwakePatch._StaminaBarUIRect.anchoredPosition = new Vector2(0.0f + +AttackStaminaPlugin.uiAnchoredPosition.Value.x, component2.anchoredPosition.y + AttackStaminaPlugin.uiAnchoredPosition.Value.y);
     }
 
     public static bool IsRegening(int counter)
     {
         if (counter <= AttackStaminaPlugin.timeTillCharging.Value)
             return false;
-        counter = 0;
+
+        // AttackStaminaPlugin.counter = 0;
         AttackStaminaPlugin.flag = false;
         return true;
     }
 
-    public static bool isShowing()
+    public static bool IsShowing()
     {
         if (!AttackStaminaPlugin.hasUsedRecently)
             return false;
+
         if (AttackStaminaPlugin.displayCounter <= AttackStaminaPlugin.displayTime.Value)
             return true;
+
         AttackStaminaPlugin.hasUsedRecently = false;
         AttackStaminaPlugin.displayCounter = 0;
         return false;
