@@ -18,7 +18,12 @@ static class HudAwakePatch
     [HarmonyPriority(Priority.Last)]
     static void Postfix(Hud __instance)
     {
-        RectTransform? root = AttackStaminaPlugin.betterUIInstalled ? Utils.FindChild(__instance.m_rootObject.transform, "BetterUI_StaminaBar").GetComponent<RectTransform>() : __instance.m_staminaBar2Root;
+        RectTransform? root;
+        if (AttackStaminaPlugin.betterUIInstalled && __instance.m_rootObject.transform.Find("BetterUI_StaminaBar") != null)
+            root = __instance.m_rootObject.transform.Find("BetterUI_StaminaBar").GetComponent<RectTransform>();
+        else
+            root = __instance.m_staminaBar2Root;
+        if (root == null) return;
         AttackStaminaPlugin.flag1 = true;
         AttackStaminaPlugin.AttackStaminaLogger.LogDebug("Instantiating AttackStamina Bar");
         _StaminaBarUI = Object.Instantiate(AttackStaminaPlugin.StaminaUI, root);
@@ -95,7 +100,7 @@ static class HumanoidStartAttackPatch
         float attackStamina = __instance.GetCurrentWeapon().m_shared.m_attack.m_attackStamina;
         float secondattackStamina = __instance.GetCurrentWeapon().m_shared.m_secondaryAttack.m_attackStamina;
 
-        if (!__instance.IsPlayer() || __instance != Player.m_localPlayer || (AttackStaminaPlugin.attackStamina - (double)attackStamina >= 0.0 && DoAttack&& !secondaryAttack) || (AttackStaminaPlugin.attackStamina - (double)secondattackStamina >= 0.0 && DoAttack && secondaryAttack))
+        if (!__instance.IsPlayer() || __instance != Player.m_localPlayer || (AttackStaminaPlugin.attackStamina - (double)attackStamina >= 0.0 && DoAttack && !secondaryAttack) || (AttackStaminaPlugin.attackStamina - (double)secondattackStamina >= 0.0 && DoAttack && secondaryAttack))
             return true;
 
         // Debounce to prevent rapid stamina depletion
